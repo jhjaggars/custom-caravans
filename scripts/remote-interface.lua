@@ -1,0 +1,33 @@
+-- Custom Caravans: scripts/remote-interface.lua
+--
+-- Small remote API so other mods (and test harnesses) can drive coloring
+-- without simulating GUI input.
+
+local Colors = require("__custom-caravans__/scripts/colors")
+local Gui = require("__custom-caravans__/scripts/gui")
+
+remote.add_interface("custom-caravans", {
+  -- entity: LuaEntity (one of the supported caravan/outpost prototypes)
+  -- color: {r=,g=,b=[,a=]} with 0..1 components
+  set_color = function(entity, color)
+    Colors.set_color(entity, color)
+  end,
+
+  -- Masked caravans revert to their default tint (they must always carry an
+  -- overlay); wash caravans and outposts lose their overlay entirely.
+  clear_color = function(entity)
+    Colors.reset_color(entity)
+  end,
+
+  -- Returns {r,g,b,a} or nil.
+  get_color = function(unit_number)
+    return Colors.get_color(unit_number)
+  end,
+
+  open_gui = function(player_index, entity)
+    local player = game.get_player(player_index)
+    if player then
+      Gui.open_for_entity(player, entity)
+    end
+  end,
+})

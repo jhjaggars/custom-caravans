@@ -12,10 +12,9 @@ remote.add_interface("custom-caravans", {
     Colors.set_color(entity, color)
   end,
 
-  -- Masked caravans revert to their default tint (they must always carry an
-  -- overlay); wash caravans and outposts lose their overlay entirely.
+  -- Removes the overlay entirely, restoring the entity's stock appearance.
   clear_color = function(entity)
-    Colors.reset_color(entity)
+    Colors.clear_color(entity)
   end,
 
   -- Returns {r,g,b,a} or nil.

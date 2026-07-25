@@ -21,6 +21,8 @@
 -- label) never raise on_gui_click, and tinting a swatch button would need a
 -- generated sprite prototype per color, which is not worth it when the
 -- sliders cover the whole space.
+--
+-- Reset removes the color entirely, restoring the entity's stock appearance.
 
 local Colors = require("__custom-caravans__/scripts/colors")
 
@@ -309,7 +311,7 @@ script.on_event(defines.events.on_gui_click, function(event)
     return
   end
 
-  Colors.reset_color(entity)
+  Colors.clear_color(entity)
   -- Reset moves the sliders themselves, so this is the full refresh.
   refresh(section, Colors.get_color(entity.unit_number) or DEFAULT_COLOR)
 end)

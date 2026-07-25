@@ -9,6 +9,5 @@ Date: 2026-07-24
     - Outpost colors persist through blueprints, ghosts, and cloning.
     - Remote interface "custom-caravans" (set_color, clear_color, get_color, open_gui) for other mods.
   Graphics:
-    - Caravan and fluidavan recolor via pyalienlife's own mask sheets, applied as a direction-tracked overlay.
-    - Generated livery masks for all four outposts (banner, pY logo, hazard stripes) for crisp locomotive-style repaints.
-    - Flyavan, fluidflyavan, and nukavan use a translucent tinted wash of the body sprite (no mask art exists for them).
+    - Generated livery masks for all four outposts (banner, pY logo, hazard stripes) give crisp locomotive-style repaints.
+    - Caravans show their color as a ground ring marker and keep their stock livery: their walk cycle advances about a frame per tick and the engine exposes no way to read an entity's current animation frame, so a tinted body overlay cannot be held in phase with the sprite.

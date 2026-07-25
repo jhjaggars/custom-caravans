@@ -30,7 +30,9 @@ script.on_event(defines.events.on_entity_settings_pasted, function(event)
   if source_color then
     Colors.set_color(destination, source_color)
   else
-    Colors.reset_color(destination)
+    -- Pasting from an uncolored entity clears the destination, so paste is a
+    -- faithful copy rather than only ever adding color.
+    Colors.clear_color(destination)
   end
 end)
 
@@ -67,39 +69,41 @@ end)
 -- (by a player, a construction robot, or a space platform).
 --------------------------------------------------------------------------------
 
-local function all_name_filters()
+local function name_filters(names)
   local filters = {}
-  for i, name in ipairs(Colors.ALL_LIST) do
+  for i, name in ipairs(names) do
     filters[i] = {filter = "name", name = name}
     if i > 1 then filters[i].mode = "or" end
   end
   return filters
 end
 
+local function all_name_filters()
+  return name_filters(Colors.ALL_LIST)
+end
+
+local function outpost_name_filters()
+  return name_filters(Colors.OUTPOST_LIST)
+end
+
 local function on_built(event)
   local entity = event.entity
-  if not (entity and entity.valid) then return end
+  if not (entity and entity.valid and Colors.OUTPOSTS[entity.name]) then return end
 
-  if Colors.OUTPOSTS[entity.name] then
-    local tags = event.tags
-    local color = tags and tags[BLUEPRINT_TAG_KEY]
-    if color then
-      Colors.set_color(entity, color)
-    end
-  elseif Colors.CARAVANS[entity.name] then
-    -- Masked caravans must always carry an overlay (their baked mask layer is
-    -- stripped at data stage); freshly placed ones get their default tint.
-    Colors.ensure_default(entity)
+  local tags = event.tags
+  local color = tags and tags[BLUEPRINT_TAG_KEY]
+  if color then
+    Colors.set_color(entity, color)
   end
 end
 
-script.on_event(defines.events.on_built_entity, on_built, all_name_filters())
-script.on_event(defines.events.on_robot_built_entity, on_built, all_name_filters())
-script.on_event(defines.events.script_raised_built, on_built, all_name_filters())
-script.on_event(defines.events.script_raised_revive, on_built, all_name_filters())
+script.on_event(defines.events.on_built_entity, on_built, outpost_name_filters())
+script.on_event(defines.events.on_robot_built_entity, on_built, outpost_name_filters())
+script.on_event(defines.events.script_raised_built, on_built, outpost_name_filters())
+script.on_event(defines.events.script_raised_revive, on_built, outpost_name_filters())
 
 if defines.events.on_space_platform_built_entity then
-  script.on_event(defines.events.on_space_platform_built_entity, on_built, all_name_filters())
+  script.on_event(defines.events.on_space_platform_built_entity, on_built, outpost_name_filters())
 end
 
 --------------------------------------------------------------------------------
@@ -114,7 +118,5 @@ script.on_event(defines.events.on_entity_cloned, function(event)
   local color = Colors.get_color(source.unit_number)
   if color then
     Colors.set_color(destination, color)
-  else
-    Colors.ensure_default(destination)
   end
 end, all_name_filters())

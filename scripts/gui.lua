@@ -2,13 +2,10 @@
 --
 -- The color picker is attached INSIDE the entity's own window rather than
 -- being a free-floating frame in player.gui.screen. That placement is load
--- bearing, not cosmetic:
+-- bearing, not cosmetic: clicking a screen frame that is not part of
+-- `player.opened` makes the engine close the opened GUI, so a free-floating
+-- panel took pyalienlife's whole caravan window down with it on first click.
 --
---   * Clicking a screen frame that is not part of `player.opened` makes the
---     engine close the opened GUI. For caravans that means pyalienlife's
---     on_gui_closed destroys caravan_gui outright, so a free-floating panel
---     took the whole caravan window down with it on the first click and the
---     color never got applied.
 --   * Caravans: pyalienlife opens a custom screen frame named "caravan_gui"
 --     (scripts/caravan/gui.lua) carrying tags.unit_number. We add our section
 --     as a child of that frame, so clicks land inside player.opened. Their
@@ -20,33 +17,15 @@
 --     GUI *type*, so it must be created on open and destroyed on close --
 --     otherwise it would show up on every container in the game.
 --
--- Preset swatches are sprite-buttons using the tinted sprite prototypes from
--- data-updates.lua: LuaGuiElement has no runtime tint, and non-interactive
--- widgets (progressbar, sprite, label) never raise on_gui_click, so a
--- progressbar "swatch" silently swallowed every click.
+-- Only sliders are offered: non-interactive widgets (progressbar, sprite,
+-- label) never raise on_gui_click, and tinting a swatch button would need a
+-- generated sprite prototype per color, which is not worth it when the
+-- sliders cover the whole space.
 
 local Colors = require("__custom-caravans__/scripts/colors")
 
 local SECTION_NAME = "custom_caravans_color_section"
-
--- Keep in sync with PRESET_COLORS in data-updates.lua, which generates the
--- "custom-caravans-swatch-<name>" sprites these buttons display. Colors are
--- the vanilla player_colors palette (core/prototypes/utility-constants.lua).
-local PRESETS = {
-  {name = "red", color = {r = 0.815, g = 0.024, b = 0.0}},
-  {name = "green", color = {r = 0.093, g = 0.768, b = 0.172}},
-  {name = "blue", color = {r = 0.155, g = 0.540, b = 0.898}},
-  {name = "orange", color = {r = 0.869, g = 0.5, b = 0.130}},
-  {name = "yellow", color = {r = 0.835, g = 0.666, b = 0.077}},
-  {name = "pink", color = {r = 0.929, g = 0.386, b = 0.514}},
-  {name = "purple", color = {r = 0.485, g = 0.111, b = 0.659}},
-  {name = "white", color = {r = 0.8, g = 0.8, b = 0.8}},
-  {name = "black", color = {r = 0.1, g = 0.1, b = 0.1}},
-  {name = "gray", color = {r = 0.4, g = 0.4, b = 0.4}},
-  {name = "brown", color = {r = 0.300, g = 0.117, b = 0.0}},
-  {name = "cyan", color = {r = 0.275, g = 0.755, b = 0.712}},
-  {name = "acid", color = {r = 0.559, g = 0.761, b = 0.157}},
-}
+local CHANNELS = {"r", "g", "b"}
 
 local RELATIVE_GUI_TYPES = {
   ["outpost"] = defines.relative_gui_type.container_gui,
@@ -63,8 +42,13 @@ local Gui = {}
 -- Helpers
 --------------------------------------------------------------------------------
 
+--- Prefer our own storage, which already holds a validated LuaEntity for
+--- anything that has been colored, and fall back to the unit_number lookup for
+--- entities that have never been colored yet.
 local function resolve_entity(unit_number)
   if not unit_number then return nil end
+  local entry = Colors.get_entry(unit_number)
+  if entry and entry.entity and entry.entity.valid then return entry.entity end
   local entity = game.get_entity_by_unit_number(unit_number)
   if entity and entity.valid then return entity end
   return nil
@@ -101,30 +85,6 @@ local function build_preview(parent, color)
   preview.style.size = {56, 20}
   preview.style.bar_width = 20 -- fill the element instead of drawing a thin bar
   preview.style.color = color
-end
-
-local function build_presets(parent, unit_number)
-  local table_el = parent.add {type = "table", name = "ccc_presets", column_count = 7}
-  table_el.style.horizontal_spacing = 4
-  table_el.style.vertical_spacing = 4
-
-  for _, preset in ipairs(PRESETS) do
-    local button = table_el.add {
-      type = "sprite-button",
-      name = "ccc_preset_" .. preset.name,
-      style = "slot_button",
-      sprite = "custom-caravans-swatch-" .. preset.name,
-      tooltip = {"custom-caravans-color." .. preset.name},
-      tags = {
-        ccc_action = "preset",
-        unit_number = unit_number,
-        r = preset.color.r,
-        g = preset.color.g,
-        b = preset.color.b,
-      },
-    }
-    button.style.size = 28
-  end
 end
 
 local function build_slider_row(parent, channel, caption, unit_number, value)
@@ -180,7 +140,6 @@ function Gui.open(player, entity, parent, anchor)
   }
 
   build_preview(content, color)
-  build_presets(content, unit_number)
 
   local sliders = content.add {type = "flow", name = "ccc_sliders", direction = "vertical"}
   build_slider_row(sliders, "r", "R", unit_number, to_255(color.r))
@@ -194,6 +153,9 @@ function Gui.open(player, entity, parent, anchor)
     tooltip = {"custom-caravans-gui.reset-tooltip"},
     tags = {ccc_action = "reset", unit_number = unit_number},
   }
+
+  log("[custom-caravans] opened picker for " .. entity.name .. " #" .. unit_number ..
+    " stored_color=" .. (Colors.get_color(unit_number) and "yes" or "none"))
 end
 
 --------------------------------------------------------------------------------
@@ -212,7 +174,7 @@ local function refresh(section, color)
 
   local sliders = content.ccc_sliders
   if not (sliders and sliders.valid) then return end
-  for _, channel in ipairs({"r", "g", "b"}) do
+  for _, channel in ipairs(CHANNELS) do
     local flow = sliders["ccc_slider_" .. channel .. "_flow"]
     if flow and flow.valid then
       local value = to_255(color[channel])
@@ -226,12 +188,26 @@ local function color_from_sliders(section)
   local sliders = section.ccc_content and section.ccc_content.ccc_sliders
   if not (sliders and sliders.valid) then return nil end
   local out = {a = 1}
-  for _, channel in ipairs({"r", "g", "b"}) do
+  for _, channel in ipairs(CHANNELS) do
     local flow = sliders["ccc_slider_" .. channel .. "_flow"]
     if not (flow and flow.valid) then return nil end
     out[channel] = flow["ccc_slider_" .. channel].slider_value / 255
   end
   return out
+end
+
+--- Applies a color and reports what actually happened, so a silent failure
+--- leaves evidence in factorio-current.log instead of looking like a no-op.
+local function apply(entity, unit_number, color, section, what)
+  Colors.set_color(entity, color)
+  refresh(section, color)
+
+  local entry = Colors.get_entry(unit_number)
+  log(string.format(
+    "[custom-caravans] %s %s #%s -> r=%.3f g=%.3f b=%.3f | stored=%s render=%s",
+    what, entity.name, tostring(unit_number), color.r, color.g, color.b,
+    entry and entry.color and "yes" or "NO",
+    entry and entry.render and entry.render.valid and "valid" or "MISSING"))
 end
 
 --------------------------------------------------------------------------------
@@ -261,6 +237,9 @@ script.on_event(defines.events.on_gui_opened, function(event)
     local entity = resolve_entity(unit_number)
     if entity and Colors.CARAVANS[entity.name] then
       Gui.open(player, entity, event.element, nil)
+    else
+      log("[custom-caravans] caravan_gui opened but entity unresolved: unit_number=" ..
+        tostring(unit_number) .. " entity=" .. tostring(entity and entity.name))
     end
   end
 end)
@@ -274,44 +253,68 @@ script.on_event(defines.events.on_gui_closed, function(event)
   if existing and existing.valid then existing.destroy() end
 end)
 
+--- Our elements are identified by tag, with the element name as a fallback:
+--- tags are the intended mechanism, but recognising our own names as well
+--- means a lost/empty tags table can't silently disable the whole picker.
+local function is_ours(element, action, name_pattern)
+  local tags = element.tags
+  if tags and tags.ccc_action == action then return true end
+  return element.name:match(name_pattern) ~= nil
+end
+
+--- unit_number lives on every interactive element, but the section frame
+--- carries it too, so a child with no tags can still be traced back.
+local function unit_number_for(element, section)
+  local tags = element.tags
+  if tags and tags.unit_number then return tags.unit_number end
+  if section and section.valid and section.tags then return section.tags.unit_number end
+  return nil
+end
+
 script.on_event(defines.events.on_gui_click, function(event)
   local element = event.element
-  if not (element and element.valid and element.tags) then return end
-  local action = element.tags.ccc_action
-  if action ~= "preset" and action ~= "reset" then return end
-
-  local unit_number = element.tags.unit_number
-  local entity = resolve_entity(unit_number)
-  if not entity then return end
+  if not (element and element.valid) then return end
+  if not is_ours(element, "reset", "^ccc_reset_button$") then return end
 
   local section = find_section(element)
-
-  if action == "preset" then
-    local color = {r = element.tags.r, g = element.tags.g, b = element.tags.b, a = 1}
-    Colors.set_color(entity, color)
-    refresh(section, color)
-  else
-    Colors.reset_color(entity)
-    refresh(section, Colors.get_color(unit_number) or DEFAULT_COLOR)
+  local unit_number = unit_number_for(element, section)
+  local entity = resolve_entity(unit_number)
+  if not entity then
+    log("[custom-caravans] reset clicked but entity unresolved: unit_number=" .. tostring(unit_number))
+    return
   end
+
+  Colors.reset_color(entity)
+  local color = Colors.get_color(unit_number) or DEFAULT_COLOR
+  refresh(section, color)
+  log("[custom-caravans] reset " .. entity.name .. " #" .. tostring(unit_number))
 end)
 
 script.on_event(defines.events.on_gui_value_changed, function(event)
   local element = event.element
-  if not (element and element.valid and element.tags) then return end
-  if element.tags.ccc_action ~= "slider" then return end
-
-  local entity = resolve_entity(element.tags.unit_number)
-  if not entity then return end
+  if not (element and element.valid) then return end
+  if not is_ours(element, "slider", "^ccc_slider_[rgb]$") then return end
 
   local section = find_section(element)
-  if not section then return end
+  if not section then
+    log("[custom-caravans] slider moved but section not found from element " .. element.name)
+    return
+  end
+
+  local unit_number = unit_number_for(element, section)
+  local entity = resolve_entity(unit_number)
+  if not entity then
+    log("[custom-caravans] slider moved but entity unresolved: unit_number=" .. tostring(unit_number))
+    return
+  end
 
   local color = color_from_sliders(section)
-  if not color then return end
+  if not color then
+    log("[custom-caravans] slider moved but slider values unreadable")
+    return
+  end
 
-  Colors.set_color(entity, color)
-  refresh(section, color)
+  apply(entity, unit_number, color, section, "slider")
 end)
 
 return Gui

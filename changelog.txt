@@ -1,4 +1,9 @@
 ---------------------------------------------------------------------------------------------------
+Version: 0.1.1
+Date: 2026-07-25
+  Graphics:
+    - New mod thumbnail showing an outpost in a custom livery. The previous one was a stock, uncolored outpost and demonstrated nothing about the mod.
+---------------------------------------------------------------------------------------------------
 Version: 0.1.0
 Date: 2026-07-25
   Features:

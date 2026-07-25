@@ -4,6 +4,8 @@ A small companion mod for [pyalienlife](https://mods.factorio.com/mod/pyalienlif
 each individual caravan and caravan outpost with its own custom color, just like locomotives or train
 stops - instead of every caravan/outpost of a given type looking identical.
 
+![A green-liveried outpost and a caravan with a matching green ring marker](media/screenshot-outpost-and-caravan.png)
+
 ## Features
 
 - **Per-entity color** for all five caravan units (`caravan`, `fluidavan`, `flyavan`, `fluidflyavan`,

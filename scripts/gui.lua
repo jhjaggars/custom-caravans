@@ -91,6 +91,12 @@ local function to_255(component)
   return math.floor((component or 1) * 255 + 0.5)
 end
 
+--- The swatch always shows the chosen hue at full strength; alpha is reported
+--- by its own percentage read-out rather than muddying the hue reference.
+local function solid(color)
+  return {r = color.r, g = color.g, b = color.b}
+end
+
 --------------------------------------------------------------------------------
 -- Construction
 --------------------------------------------------------------------------------
@@ -108,7 +114,33 @@ local function build_preview(parent, color)
   preview.style.height = 24
   preview.style.horizontally_stretchable = true
   preview.style.bar_width = 24 -- fill the element instead of drawing a thin bar
-  preview.style.color = color
+  preview.style.color = solid(color)
+end
+
+--- Overlay opacity. Applies to both forms: it fades the caravan marker, and
+--- lets an outpost's stock livery show through its repaint.
+local function build_alpha_row(parent, unit_number, alpha)
+  local flow = parent.add {type = "flow", name = "ccc_alpha_flow", direction = "horizontal"}
+  flow.style.vertical_align = "center"
+  flow.add {type = "label", caption = {"custom-caravans-gui.alpha"}}
+
+  local slider = flow.add {
+    type = "slider",
+    name = "ccc_alpha",
+    minimum_value = 10,
+    maximum_value = 100,
+    value = alpha * 100,
+    value_step = 5,
+    tags = {ccc_action = "slider", unit_number = unit_number},
+  }
+  slider.style.horizontally_stretchable = true
+
+  local value_label = flow.add {
+    type = "label",
+    name = "ccc_alpha_value",
+    caption = string.format("%d%%", math.floor(alpha * 100 + 0.5)),
+  }
+  value_label.style.width = 42
 end
 
 --- Marker size, caravans only: the outpost overlay is a mask cut to fit its
@@ -196,6 +228,8 @@ function Gui.open(player, entity, parent, anchor)
   build_slider_row(sliders, "g", "G", unit_number, to_255(color.g))
   build_slider_row(sliders, "b", "B", unit_number, to_255(color.b))
 
+  build_alpha_row(content, unit_number, color.a or 1)
+
   if Colors.CARAVANS[entity.name] then
     -- Falls back to this player's last chosen size, so sizing a fleet to taste
     -- is a one-time adjustment rather than a per-caravan chore.
@@ -230,7 +264,12 @@ local function refresh_preview(section, color, scale)
 
   local preview_flow = content.ccc_preview_flow
   if preview_flow and preview_flow.valid then
-    preview_flow.ccc_preview_frame.ccc_preview.style.color = color
+    preview_flow.ccc_preview_frame.ccc_preview.style.color = solid(color)
+  end
+
+  local alpha_flow = content.ccc_alpha_flow
+  if alpha_flow and alpha_flow.valid then
+    alpha_flow.ccc_alpha_value.caption = string.format("%d%%", math.floor((color.a or 1) * 100 + 0.5))
   end
 
   local size_flow = content.ccc_size_flow
@@ -253,7 +292,15 @@ end
 local function refresh(section, color)
   refresh_preview(section, color)
   if not (section and section.valid) then return end
-  local sliders = section.ccc_content and section.ccc_content.ccc_sliders
+  local content = section.ccc_content
+  if not (content and content.valid) then return end
+
+  local alpha_flow = content.ccc_alpha_flow
+  if alpha_flow and alpha_flow.valid then
+    alpha_flow.ccc_alpha.slider_value = (color.a or 1) * 100
+  end
+
+  local sliders = content.ccc_sliders
   if not (sliders and sliders.valid) then return end
   for _, channel in ipairs(CHANNELS) do
     local flow = sliders["ccc_slider_" .. channel .. "_flow"]
@@ -280,6 +327,12 @@ local function scale_from_slider(section)
   local flow = section.ccc_content and section.ccc_content.ccc_size_flow
   if not (flow and flow.valid) then return nil end
   return flow.ccc_size.slider_value / 100
+end
+
+local function alpha_from_slider(section)
+  local flow = section.ccc_content and section.ccc_content.ccc_alpha_flow
+  if not (flow and flow.valid) then return 1 end
+  return flow.ccc_alpha.slider_value / 100
 end
 
 
@@ -334,6 +387,7 @@ local SLIDER_NAMES = {
   ccc_slider_r = true,
   ccc_slider_g = true,
   ccc_slider_b = true,
+  ccc_alpha = true,
   ccc_size = true,
 }
 
@@ -394,6 +448,7 @@ script.on_event(defines.events.on_gui_value_changed, function(event)
     log("[custom-caravans] slider moved but slider values unreadable")
     return
   end
+  color.a = alpha_from_slider(section)
 
   local scale = scale_from_slider(section)
   if scale then

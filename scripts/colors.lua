@@ -59,6 +59,15 @@ Colors.MAX_SCALE = 2.5
 local MARKER_RENDER_LAYER = "ground-patch-higher"
 local MASK_RENDER_LAYER = "higher-object-above"
 
+--- The game expects colors in pre-multiplied form (channels already multiplied
+--- by alpha). storage keeps the plain color the player picked, so this is
+--- applied at draw time; without it a reduced alpha washes the overlay out
+--- towards white instead of fading it.
+local function tint_for(color)
+  local a = color.a or 1
+  return {r = (color.r or 0) * a, g = (color.g or 0) * a, b = (color.b or 0) * a, a = a}
+end
+
 --- Ensures storage.colors exists. Only ever called from runtime event
 --- handlers (never from on_load), so mutating storage here is safe.
 local function get_store()
@@ -144,7 +153,7 @@ function Colors.set_color(entity, color, scale)
       sprite = MARKER_SPRITE,
       target = entity,
       surface = entity.surface,
-      tint = entry.color,
+      tint = tint_for(entry.color),
       render_layer = MARKER_RENDER_LAYER,
       x_scale = entry.scale,
       y_scale = entry.scale,
@@ -156,7 +165,7 @@ function Colors.set_color(entity, color, scale)
         sprite = sprite_name,
         target = entity,
         surface = entity.surface,
-        tint = entry.color,
+        tint = tint_for(entry.color),
         render_layer = MASK_RENDER_LAYER,
       }
     end

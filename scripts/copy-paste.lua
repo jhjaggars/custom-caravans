@@ -28,7 +28,7 @@ script.on_event(defines.events.on_entity_settings_pasted, function(event)
 
   local source_color = Colors.get_color(source.unit_number)
   if source_color then
-    Colors.set_color(destination, source_color)
+    Colors.set_color(destination, source_color, Colors.get_scale(source.unit_number))
   else
     -- Pasting from an uncolored entity clears the destination, so paste is a
     -- faithful copy rather than only ever adding color.
@@ -117,6 +117,6 @@ script.on_event(defines.events.on_entity_cloned, function(event)
 
   local color = Colors.get_color(source.unit_number)
   if color then
-    Colors.set_color(destination, color)
+    Colors.set_color(destination, color, Colors.get_scale(source.unit_number))
   end
 end, all_name_filters())

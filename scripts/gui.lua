@@ -111,6 +111,32 @@ local function build_preview(parent, color)
   preview.style.color = color
 end
 
+--- Marker size, caravans only: the outpost overlay is a mask cut to fit its
+--- building, so scaling it would just misalign the paint.
+local function build_size_row(parent, unit_number, scale)
+  local flow = parent.add {type = "flow", name = "ccc_size_flow", direction = "horizontal"}
+  flow.style.vertical_align = "center"
+  flow.add {type = "label", caption = {"custom-caravans-gui.size"}}
+
+  local slider = flow.add {
+    type = "slider",
+    name = "ccc_size",
+    minimum_value = Colors.MIN_SCALE * 100,
+    maximum_value = Colors.MAX_SCALE * 100,
+    value = scale * 100,
+    value_step = 5,
+    tags = {ccc_action = "slider", unit_number = unit_number},
+  }
+  slider.style.horizontally_stretchable = true
+
+  local value_label = flow.add {
+    type = "label",
+    name = "ccc_size_value",
+    caption = string.format("%d%%", math.floor(scale * 100 + 0.5)),
+  }
+  value_label.style.width = 42
+end
+
 local function build_slider_row(parent, channel, caption, unit_number, value)
   local flow = parent.add {type = "flow", name = "ccc_slider_" .. channel .. "_flow", direction = "horizontal"}
   flow.style.vertical_align = "center"
@@ -170,6 +196,15 @@ function Gui.open(player, entity, parent, anchor)
   build_slider_row(sliders, "g", "G", unit_number, to_255(color.g))
   build_slider_row(sliders, "b", "B", unit_number, to_255(color.b))
 
+  if Colors.CARAVANS[entity.name] then
+    -- Falls back to this player's last chosen size, so sizing a fleet to taste
+    -- is a one-time adjustment rather than a per-caravan chore.
+    local scale = Colors.get_scale(unit_number)
+      or (storage.last_scale and storage.last_scale[player.index])
+      or Colors.DEFAULT_SCALE
+    build_size_row(content, unit_number, scale)
+  end
+
   content.add {
     type = "button",
     name = "ccc_reset_button",
@@ -188,7 +223,7 @@ end
 --- Updates the swatch and the numeric read-outs. Deliberately does NOT write
 --- slider positions: this runs while the player is dragging, and assigning
 --- slider_value mid-drag fights the drag.
-local function refresh_preview(section, color)
+local function refresh_preview(section, color, scale)
   if not (section and section.valid) then return end
   local content = section.ccc_content
   if not (content and content.valid) then return end
@@ -196,6 +231,11 @@ local function refresh_preview(section, color)
   local preview_flow = content.ccc_preview_flow
   if preview_flow and preview_flow.valid then
     preview_flow.ccc_preview_frame.ccc_preview.style.color = color
+  end
+
+  local size_flow = content.ccc_size_flow
+  if scale and size_flow and size_flow.valid then
+    size_flow.ccc_size_value.caption = string.format("%d%%", math.floor(scale * 100 + 0.5))
   end
 
   local sliders = content.ccc_sliders
@@ -233,6 +273,13 @@ local function color_from_sliders(section)
     out[channel] = flow["ccc_slider_" .. channel].slider_value / 255
   end
   return out
+end
+
+--- nil when the section has no size row (outposts).
+local function scale_from_slider(section)
+  local flow = section.ccc_content and section.ccc_content.ccc_size_flow
+  if not (flow and flow.valid) then return nil end
+  return flow.ccc_size.slider_value / 100
 end
 
 
@@ -283,10 +330,18 @@ end)
 --- Our elements are identified by tag, with the element name as a fallback:
 --- tags are the intended mechanism, but recognising our own names as well
 --- means a lost/empty tags table can't silently disable the whole picker.
-local function is_ours(element, action, name_pattern)
+local SLIDER_NAMES = {
+  ccc_slider_r = true,
+  ccc_slider_g = true,
+  ccc_slider_b = true,
+  ccc_size = true,
+}
+
+local function is_ours(element, action)
   local tags = element.tags
   if tags and tags.ccc_action == action then return true end
-  return element.name:match(name_pattern) ~= nil
+  if action == "slider" then return SLIDER_NAMES[element.name] == true end
+  return element.name == "ccc_reset_button"
 end
 
 --- unit_number lives on every interactive element, but the section frame
@@ -301,7 +356,7 @@ end
 script.on_event(defines.events.on_gui_click, function(event)
   local element = event.element
   if not (element and element.valid) then return end
-  if not is_ours(element, "reset", "^ccc_reset_button$") then return end
+  if not is_ours(element, "reset") then return end
 
   local section = find_section(element)
   local unit_number = unit_number_for(element, section)
@@ -319,7 +374,7 @@ end)
 script.on_event(defines.events.on_gui_value_changed, function(event)
   local element = event.element
   if not (element and element.valid) then return end
-  if not is_ours(element, "slider", "^ccc_slider_[rgb]$") then return end
+  if not is_ours(element, "slider") then return end
 
   local section = find_section(element)
   if not section then
@@ -340,9 +395,15 @@ script.on_event(defines.events.on_gui_value_changed, function(event)
     return
   end
 
-  Colors.set_color(entity, color)
+  local scale = scale_from_slider(section)
+  if scale then
+    storage.last_scale = storage.last_scale or {}
+    storage.last_scale[event.player_index] = scale
+  end
+
+  Colors.set_color(entity, color, scale)
   -- Preview-only: writing slider positions back mid-drag fights the drag.
-  refresh_preview(section, color)
+  refresh_preview(section, color, scale)
 end)
 
 return Gui

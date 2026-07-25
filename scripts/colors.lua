@@ -19,6 +19,7 @@
 --
 -- storage.colors[unit_number] = {
 --   color = {r, g, b, a},   -- the color the player picked
+--   scale = number,          -- marker size multiplier (caravans only)
 --   entity = LuaEntity,      -- safe to store: storage persists LuaObject refs
 --   entity_name = string,    -- cached, since entity may become invalid
 --   render = LuaRenderObject,
@@ -48,6 +49,11 @@ for _, name in ipairs(Colors.OUTPOST_LIST) do
 end
 
 local MARKER_SPRITE = "custom-caravans-marker"
+-- Multiplies the sprite prototype's own scale. The GUI offers
+-- MIN_SCALE..MAX_SCALE; anything outside that is a scripted caller's problem.
+Colors.DEFAULT_SCALE = 1.0
+Colors.MIN_SCALE = 0.4
+Colors.MAX_SCALE = 2.5
 -- The marker sits on the ground under the caravan; the outpost mask has to
 -- land on top of the building it repaints.
 local MARKER_RENDER_LAYER = "ground-patch-higher"
@@ -81,6 +87,12 @@ function Colors.get_entry(unit_number)
   return storage.colors and storage.colors[unit_number]
 end
 
+--- Marker size multiplier, or nil if this entity has never been colored.
+function Colors.get_scale(unit_number)
+  local entry = Colors.get_entry(unit_number)
+  return entry and entry.scale
+end
+
 --- Destroys the render object (if any) and removes the storage entry.
 function Colors.clear_color(entity_or_unit_number)
   local unit_number
@@ -102,8 +114,9 @@ function Colors.clear_color(entity_or_unit_number)
 end
 
 --- Creates or updates the tinted overlay for `entity`. `color` is a plain
---- {r,g,b[,a]} table (values 0..1).
-function Colors.set_color(entity, color)
+--- {r,g,b[,a]} table (values 0..1). `scale` sizes the caravan marker and is
+--- optional: omitting it keeps whatever size the entity already had.
+function Colors.set_color(entity, color, scale)
   if not (entity and entity.valid) then return end
   local unit_number = entity.unit_number
   if not unit_number then return end
@@ -117,6 +130,7 @@ function Colors.set_color(entity, color)
   store[unit_number] = entry
 
   entry.color = {r = color.r, g = color.g, b = color.b, a = color.a or 1}
+  entry.scale = scale or entry.scale or Colors.DEFAULT_SCALE
   entry.entity = entity
   entry.entity_name = entity.name
 
@@ -132,6 +146,8 @@ function Colors.set_color(entity, color)
       surface = entity.surface,
       tint = entry.color,
       render_layer = MARKER_RENDER_LAYER,
+      x_scale = entry.scale,
+      y_scale = entry.scale,
     }
   else
     local sprite_name = Colors.overlay_sprite_name(entity.name)

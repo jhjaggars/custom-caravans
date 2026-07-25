@@ -8,8 +8,9 @@ local Colors = require("__custom-caravans__/scripts/colors")
 remote.add_interface("custom-caravans", {
   -- entity: LuaEntity (one of the supported caravan/outpost prototypes)
   -- color: {r=,g=,b=[,a=]} with 0..1 components
-  set_color = function(entity, color)
-    Colors.set_color(entity, color)
+  -- scale: optional caravan marker size multiplier; omit to keep the current one
+  set_color = function(entity, color, scale)
+    Colors.set_color(entity, color, scale)
   end,
 
   -- Removes the overlay entirely, restoring the entity's stock appearance.

@@ -3,3 +3,5 @@
 Thumbs.db
 *.log
 .claude/
+build/
+release-notes.md

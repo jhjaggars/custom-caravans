@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_call: {} # lets release.yml invoke this exact same gate before publishing
+
+jobs:
+  lua-syntax:
+    name: Lua syntax check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install lua5.4
+        run: sudo apt-get update && sudo apt-get install -y lua5.4
+
+      - name: luac -p on all mod Lua
+        # Parse-only syntax check -- catches malformed Lua before it ever
+        # reaches a real Factorio load. Deliberately does NOT catch
+        # Factorio-engine-level validation errors (e.g. a bad prototype
+        # field rejected at load time) -- those need an actual Factorio
+        # process; verify locally with `factorio --dump-data` for that.
+        run: luac5.4 -p ./*.lua scripts/*.lua
+
+  metadata:
+    name: info.json + changelog format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate info.json
+        run: |
+          python3 -c "
+          import json
+          info = json.load(open('info.json'))
+          required = ['name', 'version', 'title', 'author', 'factorio_version']
+          missing = [k for k in required if not info.get(k)]
+          if missing:
+              raise SystemExit(f'info.json missing required fields: {missing}')
+          assert info['name'] == 'custom-caravans', 'name must match repo/folder name'
+          print('info.json OK:', info['name'], info['version'])
+          "
+
+      - name: Check changelog.txt format
+        # Factorio's changelog parser silently mis-renders (or drops) a
+        # malformed section rather than erroring, so this is the only thing
+        # that catches it before publish.
+        run: |
+          python3 -c "
+          lines = open('changelog.txt', encoding='utf-8').read().split(chr(10))
+          bad = [i+1 for i, l in enumerate(lines) if l != l.rstrip() or '\t' in l]
+          bad_seps = [i+1 for i, l in enumerate(lines)
+                      if set(l) == {'-'} and l and l != '-'*99]
+          if bad or bad_seps:
+              print('trailing-whitespace/tab lines:', bad or 'none')
+              print('bad separators:', bad_seps or 'none')
+              raise SystemExit(1)
+          print('changelog.txt format OK')
+          "
+
+      - name: Changelog has an entry for the current version
+        run: |
+          python3 -c "
+          import json
+          version = json.load(open('info.json'))['version']
+          text = open('changelog.txt', encoding='utf-8').read()
+          if f'Version: {version}' not in text:
+              raise SystemExit(f'changelog.txt has no entry for version {version}')
+          print(f'changelog entry for {version} present')
+          "
+
+      - name: Syntax-check mask generator
+        run: python3 -m py_compile graphics/make_masks.py

@@ -46,9 +46,23 @@ end
 -- 1. additional_pastable_entities: extend, never overwrite
 --------------------------------------------------------------------------------
 
+-- game.get_entity_by_unit_number only finds entities whose prototype carries
+-- the "get-by-unit-number" flag. `unit` sets it by default but container and
+-- storage-tank do not, so an outpost could not be looked up from the
+-- unit_number its GUI elements carry. Add it to every entity we color.
+local function add_flag(proto, flag)
+  proto.flags = proto.flags or {}
+  for _, existing in pairs(proto.flags) do
+    if existing == flag then return end
+  end
+  proto.flags[#proto.flags + 1] = flag
+end
+
 for _, ref in pairs(PROTOTYPE_REFS) do
   local proto = data.raw[ref.ptype] and data.raw[ref.ptype][ref.name]
   if proto then
+    add_flag(proto, "get-by-unit-number")
+
     proto.additional_pastable_entities = proto.additional_pastable_entities or {}
 
     local existing = {}

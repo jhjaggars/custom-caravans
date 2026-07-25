@@ -42,13 +42,33 @@ local Gui = {}
 -- Helpers
 --------------------------------------------------------------------------------
 
---- Prefer our own storage, which already holds a validated LuaEntity for
---- anything that has been colored, and fall back to the unit_number lookup for
---- entities that have never been colored yet.
-local function resolve_entity(unit_number)
+--- Remembers which entity a player's picker is editing.
+--- game.get_entity_by_unit_number only finds prototypes flagged
+--- "get-by-unit-number" -- `unit` has it, but `container`/`storage-tank` do
+--- not, so outposts were unresolvable and every slider move bailed out. The
+--- data stage now adds that flag, but holding the LuaEntity we were handed at
+--- open time is both cheaper and independent of it.
+local function remember(player_index, entity)
+  storage.picker = storage.picker or {}
+  storage.picker[player_index] = {entity = entity, unit_number = entity.unit_number}
+end
+
+local function forget(player_index)
+  if storage.picker then storage.picker[player_index] = nil end
+end
+
+local function resolve_entity(player_index, unit_number)
+  -- 1. the entity this player's picker was opened for
+  local rec = player_index and storage.picker and storage.picker[player_index]
+  if rec and rec.entity and rec.entity.valid
+      and (unit_number == nil or rec.unit_number == unit_number) then
+    return rec.entity
+  end
   if not unit_number then return nil end
+  -- 2. anything already colored keeps a validated reference
   local entry = Colors.get_entry(unit_number)
   if entry and entry.entity and entry.entity.valid then return entry.entity end
+  -- 3. engine lookup (needs the get-by-unit-number prototype flag)
   local entity = game.get_entity_by_unit_number(unit_number)
   if entity and entity.valid then return entity end
   return nil
@@ -79,11 +99,13 @@ local function build_preview(parent, color)
   flow.add {type = "label", caption = {"custom-caravans-gui.preview"}}
 
   local preview_frame = flow.add {type = "frame", name = "ccc_preview_frame", style = "deep_frame_in_shallow_frame"}
+  preview_frame.style.horizontally_stretchable = true
   -- A progressbar is the only widget whose style exposes a settable flat
   -- color; it is display-only here, so its lack of click events is fine.
   local preview = preview_frame.add {type = "progressbar", name = "ccc_preview", value = 1}
-  preview.style.size = {56, 20}
-  preview.style.bar_width = 20 -- fill the element instead of drawing a thin bar
+  preview.style.height = 24
+  preview.style.horizontally_stretchable = true
+  preview.style.bar_width = 24 -- fill the element instead of drawing a thin bar
   preview.style.color = color
 end
 
@@ -154,15 +176,17 @@ function Gui.open(player, entity, parent, anchor)
     tags = {ccc_action = "reset", unit_number = unit_number},
   }
 
-  log("[custom-caravans] opened picker for " .. entity.name .. " #" .. unit_number ..
-    " stored_color=" .. (Colors.get_color(unit_number) and "yes" or "none"))
+  remember(player.index, entity)
 end
 
 --------------------------------------------------------------------------------
 -- Live updates
 --------------------------------------------------------------------------------
 
-local function refresh(section, color)
+--- Updates the swatch and the numeric read-outs. Deliberately does NOT write
+--- slider positions: this runs while the player is dragging, and assigning
+--- slider_value mid-drag fights the drag.
+local function refresh_preview(section, color)
   if not (section and section.valid) then return end
   local content = section.ccc_content
   if not (content and content.valid) then return end
@@ -177,9 +201,22 @@ local function refresh(section, color)
   for _, channel in ipairs(CHANNELS) do
     local flow = sliders["ccc_slider_" .. channel .. "_flow"]
     if flow and flow.valid then
-      local value = to_255(color[channel])
-      flow["ccc_slider_" .. channel].slider_value = value
-      flow["ccc_slider_" .. channel .. "_value"].caption = tostring(value)
+      flow["ccc_slider_" .. channel .. "_value"].caption = tostring(to_255(color[channel]))
+    end
+  end
+end
+
+--- Full refresh, including slider positions. For colors applied from outside
+--- the sliders themselves (Reset).
+local function refresh(section, color)
+  refresh_preview(section, color)
+  if not (section and section.valid) then return end
+  local sliders = section.ccc_content and section.ccc_content.ccc_sliders
+  if not (sliders and sliders.valid) then return end
+  for _, channel in ipairs(CHANNELS) do
+    local flow = sliders["ccc_slider_" .. channel .. "_flow"]
+    if flow and flow.valid then
+      flow["ccc_slider_" .. channel].slider_value = to_255(color[channel])
     end
   end
 end
@@ -196,19 +233,6 @@ local function color_from_sliders(section)
   return out
 end
 
---- Applies a color and reports what actually happened, so a silent failure
---- leaves evidence in factorio-current.log instead of looking like a no-op.
-local function apply(entity, unit_number, color, section, what)
-  Colors.set_color(entity, color)
-  refresh(section, color)
-
-  local entry = Colors.get_entry(unit_number)
-  log(string.format(
-    "[custom-caravans] %s %s #%s -> r=%.3f g=%.3f b=%.3f | stored=%s render=%s",
-    what, entity.name, tostring(unit_number), color.r, color.g, color.b,
-    entry and entry.color and "yes" or "NO",
-    entry and entry.render and entry.render.valid and "valid" or "MISSING"))
-end
 
 --------------------------------------------------------------------------------
 -- Event handlers
@@ -234,7 +258,7 @@ script.on_event(defines.events.on_gui_opened, function(event)
   if event.gui_type == defines.gui_type.custom and event.element and event.element.valid
       and event.element.name == "caravan_gui" then
     local unit_number = event.element.tags and event.element.tags.unit_number
-    local entity = resolve_entity(unit_number)
+    local entity = resolve_entity(nil, unit_number)
     if entity and Colors.CARAVANS[entity.name] then
       Gui.open(player, entity, event.element, nil)
     else
@@ -251,6 +275,7 @@ script.on_event(defines.events.on_gui_closed, function(event)
   -- section is a child of pyalienlife's frame and dies with it.
   local existing = player.gui.relative[SECTION_NAME]
   if existing and existing.valid then existing.destroy() end
+  forget(event.player_index)
 end)
 
 --- Our elements are identified by tag, with the element name as a fallback:
@@ -278,16 +303,15 @@ script.on_event(defines.events.on_gui_click, function(event)
 
   local section = find_section(element)
   local unit_number = unit_number_for(element, section)
-  local entity = resolve_entity(unit_number)
+  local entity = resolve_entity(event.player_index, unit_number)
   if not entity then
     log("[custom-caravans] reset clicked but entity unresolved: unit_number=" .. tostring(unit_number))
     return
   end
 
   Colors.reset_color(entity)
-  local color = Colors.get_color(unit_number) or DEFAULT_COLOR
-  refresh(section, color)
-  log("[custom-caravans] reset " .. entity.name .. " #" .. tostring(unit_number))
+  -- Reset moves the sliders themselves, so this is the full refresh.
+  refresh(section, Colors.get_color(entity.unit_number) or DEFAULT_COLOR)
 end)
 
 script.on_event(defines.events.on_gui_value_changed, function(event)
@@ -302,7 +326,7 @@ script.on_event(defines.events.on_gui_value_changed, function(event)
   end
 
   local unit_number = unit_number_for(element, section)
-  local entity = resolve_entity(unit_number)
+  local entity = resolve_entity(event.player_index, unit_number)
   if not entity then
     log("[custom-caravans] slider moved but entity unresolved: unit_number=" .. tostring(unit_number))
     return
@@ -314,7 +338,9 @@ script.on_event(defines.events.on_gui_value_changed, function(event)
     return
   end
 
-  apply(entity, unit_number, color, section, "slider")
+  Colors.set_color(entity, color)
+  -- Preview-only: writing slider positions back mid-drag fights the drag.
+  refresh_preview(section, color)
 end)
 
 return Gui

@@ -4,7 +4,6 @@
 -- without simulating GUI input.
 
 local Colors = require("__custom-caravans__/scripts/colors")
-local Gui = require("__custom-caravans__/scripts/gui")
 
 remote.add_interface("custom-caravans", {
   -- entity: LuaEntity (one of the supported caravan/outpost prototypes)
@@ -24,10 +23,13 @@ remote.add_interface("custom-caravans", {
     return Colors.get_color(unit_number)
   end,
 
+  -- Opens the entity's own window, which carries our color section. Only
+  -- meaningful for outposts: pyalienlife owns the caravan window and opens it
+  -- from its own entity-click handler.
   open_gui = function(player_index, entity)
     local player = game.get_player(player_index)
-    if player then
-      Gui.open_for_entity(player, entity)
+    if player and entity and entity.valid then
+      player.opened = entity
     end
   end,
 })

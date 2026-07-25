@@ -1,25 +1,37 @@
 -- Custom Caravans: scripts/gui.lua
 --
--- A small standalone color-picker panel that opens alongside the entity's own
--- GUI: the vanilla container/storage-tank GUI for outposts, and pyalienlife's
--- custom "caravan_gui" screen frame for caravans.
+-- The color picker is attached INSIDE the entity's own window rather than
+-- being a free-floating frame in player.gui.screen. That placement is load
+-- bearing, not cosmetic:
 --
--- NOTE on caravan resolution: pyalienlife's caravan_gui frame carries
--- `tags = {unit_number = ...}` (see scripts/caravan/gui/main_frame.lua:27 in
--- the pyalienlife source), so on_gui_opened can read the caravan's
--- unit_number directly off event.element.tags. player.selected is only used
--- as a defensive fallback in case that ever changes upstream.
+--   * Clicking a screen frame that is not part of `player.opened` makes the
+--     engine close the opened GUI. For caravans that means pyalienlife's
+--     on_gui_closed destroys caravan_gui outright, so a free-floating panel
+--     took the whole caravan window down with it on the first click and the
+--     color never got applied.
+--   * Caravans: pyalienlife opens a custom screen frame named "caravan_gui"
+--     (scripts/caravan/gui.lua) carrying tags.unit_number. We add our section
+--     as a child of that frame, so clicks land inside player.opened. Their
+--     periodic update_gui only touches its own named sub-elements
+--     (status_flow, tabbed_pane), so our child survives updates, and it is
+--     destroyed together with their frame when the window closes.
+--   * Outposts: vanilla container/storage-tank GUI, so we use the
+--     engine-supported player.gui.relative anchor. Relative GUIs anchor by
+--     GUI *type*, so it must be created on open and destroyed on close --
+--     otherwise it would show up on every container in the game.
 --
--- Preset colors are the vanilla `player_colors` palette (same colors used for
--- character/chat color), read directly out of this Factorio installation's
--- core/prototypes/utility-constants.lua (data.raw["utility-constants"].default
--- .player_colors) - the "default" entry is a duplicate of "orange" so it's
--- omitted here.
+-- Preset swatches are sprite-buttons using the tinted sprite prototypes from
+-- data-updates.lua: LuaGuiElement has no runtime tint, and non-interactive
+-- widgets (progressbar, sprite, label) never raise on_gui_click, so a
+-- progressbar "swatch" silently swallowed every click.
 
 local Colors = require("__custom-caravans__/scripts/colors")
 
-local PANEL_NAME = "custom_caravans_color_gui"
+local SECTION_NAME = "custom_caravans_color_section"
 
+-- Keep in sync with PRESET_COLORS in data-updates.lua, which generates the
+-- "custom-caravans-swatch-<name>" sprites these buttons display. Colors are
+-- the vanilla player_colors palette (core/prototypes/utility-constants.lua).
 local PRESETS = {
   {name = "red", color = {r = 0.815, g = 0.024, b = 0.0}},
   {name = "green", color = {r = 0.093, g = 0.768, b = 0.172}},
@@ -36,126 +48,146 @@ local PRESETS = {
   {name = "acid", color = {r = 0.559, g = 0.761, b = 0.157}},
 }
 
+local RELATIVE_GUI_TYPES = {
+  ["outpost"] = defines.relative_gui_type.container_gui,
+  ["outpost-aerial"] = defines.relative_gui_type.container_gui,
+  ["outpost-fluid"] = defines.relative_gui_type.storage_tank_gui,
+  ["outpost-aerial-fluid"] = defines.relative_gui_type.storage_tank_gui,
+}
+
 local DEFAULT_COLOR = {r = 1, g = 1, b = 1}
 
 local Gui = {}
 
 --------------------------------------------------------------------------------
--- Entity resolution helpers
+-- Helpers
 --------------------------------------------------------------------------------
 
-local function resolve_entity_by_unit_number(unit_number, player)
+local function resolve_entity(unit_number)
   if not unit_number then return nil end
-
-  if game.get_entity_by_unit_number then
-    local ok, entity = pcall(game.get_entity_by_unit_number, unit_number)
-    if ok and entity and entity.valid then
-      return entity
-    end
-  end
-
-  -- Fallback guard: only trust player.selected if it actually is the entity
-  -- we're looking for.
-  if player and player.selected and player.selected.valid and player.selected.unit_number == unit_number then
-    return player.selected
-  end
-
+  local entity = game.get_entity_by_unit_number(unit_number)
+  if entity and entity.valid then return entity end
   return nil
 end
 
---------------------------------------------------------------------------------
--- Panel construction
---------------------------------------------------------------------------------
-
-local function build_titlebar(parent)
-  local flow = parent.add {type = "flow", name = "ccc_titlebar", direction = "horizontal", style = "frame_header_flow"}
-  flow.drag_target = parent
-  flow.add {type = "label", style = "frame_title", caption = {"custom-caravans-gui.title"}}
-  local drag_handle = flow.add {type = "empty-widget", style = "draggable_space_header"}
-  drag_handle.style.horizontally_stretchable = true
-  drag_handle.style.height = 24
-  drag_handle.drag_target = parent
-  flow.add {
-    type = "sprite-button",
-    name = "ccc_close_button",
-    style = "close_button",
-    sprite = "utility/close",
-    tooltip = {"custom-caravans-gui.close"},
-    tags = {ccc_action = "close"},
-  }
+--- Walks up from a clicked element to our section frame, so handlers don't
+--- depend on where the section is anchored (inside caravan_gui vs relative).
+local function find_section(element)
+  local e = element
+  while e and e.valid do
+    if e.name == SECTION_NAME then return e end
+    e = e.parent
+  end
+  return nil
 end
 
--- Color swatches (both the live preview and the preset buttons) are built
--- from `progressbar` elements at `value = 1` (a full bar), which is the only
--- LuaGuiElement type whose style exposes a settable flat `color` (LuaGuiElement
--- itself has no `tint`/`color` attribute of its own - only LuaProgressBarStyle
--- does). Progressbars still receive on_gui_click like any other element, so
--- they work fine as (plain-looking) clickable preset buttons too.
+local function to_255(component)
+  return math.floor((component or 1) * 255 + 0.5)
+end
+
+--------------------------------------------------------------------------------
+-- Construction
+--------------------------------------------------------------------------------
+
 local function build_preview(parent, color)
-  local preview_frame = parent.add {type = "frame", name = "ccc_preview_frame", style = "deep_frame_in_shallow_frame"}
-  local preview = preview_frame.add {
-    type = "progressbar",
-    name = "ccc_preview",
-    value = 1,
-    tooltip = {"custom-caravans-gui.preview"},
-  }
-  preview.style.size = {48, 24}
-  preview.style.bar_width = 24  -- fill the whole element, not just a thin bar
+  local flow = parent.add {type = "flow", name = "ccc_preview_flow", direction = "horizontal"}
+  flow.style.vertical_align = "center"
+  flow.add {type = "label", caption = {"custom-caravans-gui.preview"}}
+
+  local preview_frame = flow.add {type = "frame", name = "ccc_preview_frame", style = "deep_frame_in_shallow_frame"}
+  -- A progressbar is the only widget whose style exposes a settable flat
+  -- color; it is display-only here, so its lack of click events is fine.
+  local preview = preview_frame.add {type = "progressbar", name = "ccc_preview", value = 1}
+  preview.style.size = {56, 20}
+  preview.style.bar_width = 20 -- fill the element instead of drawing a thin bar
   preview.style.color = color
-  return preview_frame
 end
 
 local function build_presets(parent, unit_number)
-  local table_el = parent.add {type = "table", name = "ccc_presets", column_count = 6}
+  local table_el = parent.add {type = "table", name = "ccc_presets", column_count = 7}
   table_el.style.horizontal_spacing = 4
   table_el.style.vertical_spacing = 4
 
   for _, preset in ipairs(PRESETS) do
     local button = table_el.add {
-      type = "progressbar",
+      type = "sprite-button",
       name = "ccc_preset_" .. preset.name,
-      value = 1,
+      style = "slot_button",
+      sprite = "custom-caravans-swatch-" .. preset.name,
       tooltip = {"custom-caravans-color." .. preset.name},
-      tags = {ccc_action = "preset", unit_number = unit_number, r = preset.color.r, g = preset.color.g, b = preset.color.b},
+      tags = {
+        ccc_action = "preset",
+        unit_number = unit_number,
+        r = preset.color.r,
+        g = preset.color.g,
+        b = preset.color.b,
+      },
     }
-    button.style.size = 24
-    button.style.bar_width = 24  -- solid swatch
-    button.style.color = preset.color
+    button.style.size = 28
   end
 end
 
-local function build_slider_row(parent, row_name, caption, unit_number, initial_value)
-  local flow = parent.add {type = "flow", name = row_name .. "_flow", direction = "horizontal"}
+local function build_slider_row(parent, channel, caption, unit_number, value)
+  local flow = parent.add {type = "flow", name = "ccc_slider_" .. channel .. "_flow", direction = "horizontal"}
   flow.style.vertical_align = "center"
 
   local label = flow.add {type = "label", caption = caption}
-  label.style.width = 16
+  label.style.width = 14
 
   local slider = flow.add {
     type = "slider",
-    name = row_name,
+    name = "ccc_slider_" .. channel,
     minimum_value = 0,
     maximum_value = 255,
-    value = initial_value,
+    value = value,
     tags = {ccc_action = "slider", unit_number = unit_number},
   }
-  slider.style.width = 120
+  slider.style.horizontally_stretchable = true
 
-  local value_label = flow.add {type = "label", name = row_name .. "_value", caption = tostring(math.floor(initial_value))}
+  local value_label = flow.add {
+    type = "label",
+    name = "ccc_slider_" .. channel .. "_value",
+    caption = tostring(value),
+  }
   value_label.style.width = 30
-
-  return flow
 end
 
-local function build_sliders(parent, unit_number, color)
-  local flow = parent.add {type = "flow", name = "ccc_sliders", direction = "vertical"}
-  build_slider_row(flow, "ccc_slider_r", "R", unit_number, math.floor((color.r or 1) * 255 + 0.5))
-  build_slider_row(flow, "ccc_slider_g", "G", unit_number, math.floor((color.g or 1) * 255 + 0.5))
-  build_slider_row(flow, "ccc_slider_b", "B", unit_number, math.floor((color.b or 1) * 255 + 0.5))
-end
+--- Builds the color section into `parent`. `anchor` is only passed for the
+--- relative-GUI (outpost) case.
+function Gui.open(player, entity, parent, anchor)
+  local unit_number = entity.unit_number
+  if not unit_number then return end
 
-local function build_reset_button(parent, unit_number)
-  parent.add {
+  local existing = parent[SECTION_NAME]
+  if existing and existing.valid then existing.destroy() end
+
+  local color = Colors.get_color(unit_number) or DEFAULT_COLOR
+
+  local frame = parent.add {
+    type = "frame",
+    name = SECTION_NAME,
+    direction = "vertical",
+    caption = {"custom-caravans-gui.title"},
+    anchor = anchor,
+    tags = {unit_number = unit_number},
+  }
+
+  local content = frame.add {
+    type = "frame",
+    name = "ccc_content",
+    direction = "vertical",
+    style = "inside_shallow_frame_with_padding",
+  }
+
+  build_preview(content, color)
+  build_presets(content, unit_number)
+
+  local sliders = content.add {type = "flow", name = "ccc_sliders", direction = "vertical"}
+  build_slider_row(sliders, "r", "R", unit_number, to_255(color.r))
+  build_slider_row(sliders, "g", "G", unit_number, to_255(color.g))
+  build_slider_row(sliders, "b", "B", unit_number, to_255(color.b))
+
+  content.add {
     type = "button",
     name = "ccc_reset_button",
     caption = {"custom-caravans-gui.reset"},
@@ -164,102 +196,42 @@ local function build_reset_button(parent, unit_number)
   }
 end
 
---- Opens (or refreshes, if already open for the same entity) the color panel
---- for `entity`, which must be one of the 9 supported prototypes.
-function Gui.open_for_entity(player, entity)
-  if not (entity and entity.valid) then return end
-  local unit_number = entity.unit_number
-  if not unit_number then return end
-
-  local existing = player.gui.screen[PANEL_NAME]
-  if existing and existing.valid then
-    if existing.tags and existing.tags.unit_number == unit_number then
-      -- Already open for this exact entity - nothing to do.
-      return
-    end
-    existing.destroy()
-  end
-
-  local color = Colors.get_color(unit_number) or DEFAULT_COLOR
-
-  -- Building is wrapped in pcall: this panel is a "nice to have" alongside
-  -- the entity's real GUI, and a bad style/sprite name (unverifiable without
-  -- a running Factorio instance) should not be able to break the rest of the
-  -- mod's event handling.
-  local ok, err = pcall(function()
-    local frame = player.gui.screen.add {
-      type = "frame",
-      name = PANEL_NAME,
-      direction = "vertical",
-      tags = {unit_number = unit_number},
-    }
-    frame.location = {x = 20, y = 200}
-
-    build_titlebar(frame)
-
-    local content = frame.add {type = "frame", name = "ccc_content", direction = "vertical", style = "inside_shallow_frame_with_padding"}
-
-    build_preview(content, color)
-    build_presets(content, unit_number)
-    build_sliders(content, unit_number, color)
-    build_reset_button(content, unit_number)
-  end)
-
-  if not ok then
-    log("[custom-caravans] failed to build color panel: " .. tostring(err))
-    local leftover = player.gui.screen[PANEL_NAME]
-    if leftover and leftover.valid then leftover.destroy() end
-  end
-end
-
-function Gui.close(player)
-  local existing = player.gui.screen[PANEL_NAME]
-  if existing and existing.valid then
-    existing.destroy()
-  end
-end
-
 --------------------------------------------------------------------------------
--- Live-update helpers
+-- Live updates
 --------------------------------------------------------------------------------
 
-local function refresh_panel_from_color(player, color)
-  local frame = player.gui.screen[PANEL_NAME]
-  if not (frame and frame.valid) then return end
-
-  local content = frame.ccc_content
+local function refresh(section, color)
+  if not (section and section.valid) then return end
+  local content = section.ccc_content
   if not (content and content.valid) then return end
 
-  if content.ccc_preview_frame and content.ccc_preview_frame.valid then
-    content.ccc_preview_frame.ccc_preview.style.color = color
+  local preview_flow = content.ccc_preview_flow
+  if preview_flow and preview_flow.valid then
+    preview_flow.ccc_preview_frame.ccc_preview.style.color = color
   end
 
   local sliders = content.ccc_sliders
-  if sliders and sliders.valid then
-    local r = math.floor((color.r or 1) * 255 + 0.5)
-    local g = math.floor((color.g or 1) * 255 + 0.5)
-    local b = math.floor((color.b or 1) * 255 + 0.5)
-
-    sliders.ccc_slider_r_flow.ccc_slider_r.slider_value = r
-    sliders.ccc_slider_r_flow.ccc_slider_r_value.caption = tostring(r)
-    sliders.ccc_slider_g_flow.ccc_slider_g.slider_value = g
-    sliders.ccc_slider_g_flow.ccc_slider_g_value.caption = tostring(g)
-    sliders.ccc_slider_b_flow.ccc_slider_b.slider_value = b
-    sliders.ccc_slider_b_flow.ccc_slider_b_value.caption = tostring(b)
+  if not (sliders and sliders.valid) then return end
+  for _, channel in ipairs({"r", "g", "b"}) do
+    local flow = sliders["ccc_slider_" .. channel .. "_flow"]
+    if flow and flow.valid then
+      local value = to_255(color[channel])
+      flow["ccc_slider_" .. channel].slider_value = value
+      flow["ccc_slider_" .. channel .. "_value"].caption = tostring(value)
+    end
   end
 end
 
-local function current_slider_color(player)
-  local frame = player.gui.screen[PANEL_NAME]
-  if not (frame and frame.valid) then return nil end
-  local sliders = frame.ccc_content and frame.ccc_content.ccc_sliders
+local function color_from_sliders(section)
+  local sliders = section.ccc_content and section.ccc_content.ccc_sliders
   if not (sliders and sliders.valid) then return nil end
-
-  local r = sliders.ccc_slider_r_flow.ccc_slider_r.slider_value
-  local g = sliders.ccc_slider_g_flow.ccc_slider_g.slider_value
-  local b = sliders.ccc_slider_b_flow.ccc_slider_b.slider_value
-
-  return {r = r / 255, g = g / 255, b = b / 255, a = 1}
+  local out = {a = 1}
+  for _, channel in ipairs({"r", "g", "b"}) do
+    local flow = sliders["ccc_slider_" .. channel .. "_flow"]
+    if not (flow and flow.valid) then return nil end
+    out[channel] = flow["ccc_slider_" .. channel].slider_value / 255
+  end
+  return out
 end
 
 --------------------------------------------------------------------------------
@@ -270,18 +242,25 @@ script.on_event(defines.events.on_gui_opened, function(event)
   local player = game.get_player(event.player_index)
   if not player then return end
 
+  -- Outposts: anchored relative GUI beside the vanilla entity window.
   if event.gui_type == defines.gui_type.entity and event.entity and event.entity.valid then
-    if Colors.OUTPOSTS[event.entity.name] then
-      Gui.open_for_entity(player, event.entity)
+    local relative_type = RELATIVE_GUI_TYPES[event.entity.name]
+    if relative_type then
+      Gui.open(player, event.entity, player.gui.relative, {
+        gui = relative_type,
+        position = defines.relative_gui_position.right,
+      })
     end
     return
   end
 
-  if event.gui_type == defines.gui_type.custom and event.element and event.element.valid and event.element.name == "caravan_gui" then
+  -- Caravans: injected into pyalienlife's own screen frame.
+  if event.gui_type == defines.gui_type.custom and event.element and event.element.valid
+      and event.element.name == "caravan_gui" then
     local unit_number = event.element.tags and event.element.tags.unit_number
-    local entity = resolve_entity_by_unit_number(unit_number, player)
+    local entity = resolve_entity(unit_number)
     if entity and Colors.CARAVANS[entity.name] then
-      Gui.open_for_entity(player, entity)
+      Gui.open(player, entity, event.element, nil)
     end
   end
 end)
@@ -289,52 +268,31 @@ end)
 script.on_event(defines.events.on_gui_closed, function(event)
   local player = game.get_player(event.player_index)
   if not player then return end
-
-  if event.gui_type == defines.gui_type.entity and event.entity and event.entity.valid then
-    if Colors.OUTPOSTS[event.entity.name] then
-      Gui.close(player)
-    end
-    return
-  end
-
-  if event.gui_type == defines.gui_type.custom and event.element and event.element.valid then
-    if event.element.name == "caravan_gui" then
-      Gui.close(player)
-    elseif event.element.name == PANEL_NAME then
-      -- Our own panel was closed directly (e.g. Escape while it was the
-      -- top-most opened gui) - nothing else to clean up.
-    end
-  end
+  -- Only the relative (outpost) section needs explicit teardown; the caravan
+  -- section is a child of pyalienlife's frame and dies with it.
+  local existing = player.gui.relative[SECTION_NAME]
+  if existing and existing.valid then existing.destroy() end
 end)
 
 script.on_event(defines.events.on_gui_click, function(event)
   local element = event.element
   if not (element and element.valid and element.tags) then return end
   local action = element.tags.ccc_action
-  if not action then return end
-
-  local player = game.get_player(event.player_index)
-  if not player then return end
-
-  if action == "close" then
-    Gui.close(player)
-    return
-  end
+  if action ~= "preset" and action ~= "reset" then return end
 
   local unit_number = element.tags.unit_number
-  local entity = resolve_entity_by_unit_number(unit_number, player)
-  if not (entity and entity.valid) then
-    Gui.close(player)
-    return
-  end
+  local entity = resolve_entity(unit_number)
+  if not entity then return end
+
+  local section = find_section(element)
 
   if action == "preset" then
     local color = {r = element.tags.r, g = element.tags.g, b = element.tags.b, a = 1}
     Colors.set_color(entity, color)
-    refresh_panel_from_color(player, color)
-  elseif action == "reset" then
+    refresh(section, color)
+  else
     Colors.reset_color(entity)
-    refresh_panel_from_color(player, Colors.get_color(unit_number) or DEFAULT_COLOR)
+    refresh(section, Colors.get_color(unit_number) or DEFAULT_COLOR)
   end
 end)
 
@@ -343,34 +301,17 @@ script.on_event(defines.events.on_gui_value_changed, function(event)
   if not (element and element.valid and element.tags) then return end
   if element.tags.ccc_action ~= "slider" then return end
 
-  local player = game.get_player(event.player_index)
-  if not player then return end
+  local entity = resolve_entity(element.tags.unit_number)
+  if not entity then return end
 
-  local unit_number = element.tags.unit_number
-  local entity = resolve_entity_by_unit_number(unit_number, player)
-  if not (entity and entity.valid) then
-    Gui.close(player)
-    return
-  end
+  local section = find_section(element)
+  if not section then return end
 
-  -- Update this slider's own value label immediately.
-  local value_label = element.parent[element.name .. "_value"]
-  if value_label and value_label.valid then
-    value_label.caption = tostring(math.floor(element.slider_value))
-  end
-
-  local color = current_slider_color(player)
+  local color = color_from_sliders(section)
   if not color then return end
 
   Colors.set_color(entity, color)
-
-  local frame = player.gui.screen[PANEL_NAME]
-  if frame and frame.valid then
-    local preview_frame = frame.ccc_content and frame.ccc_content.ccc_preview_frame
-    if preview_frame and preview_frame.valid then
-      preview_frame.ccc_preview.style.color = color
-    end
-  end
+  refresh(section, color)
 end)
 
 return Gui

@@ -1,10 +1,12 @@
 ---------------------------------------------------------------------------------------------------
 Version: 0.1.0
-Date: 2026-07-24
+Date: 2026-07-25
   Features:
     - Per-entity custom colors for all pyalienlife caravans (caravan, fluidavan, flyavan, fluidflyavan, nukavan) and their TURD variants.
     - Per-entity custom colors for all four caravan outposts (outpost, outpost-fluid, outpost-aerial, outpost-aerial-fluid).
-    - Color picker panel (preset swatches, RGB sliders, live preview, reset) opens alongside the caravan or outpost GUI.
+    - Color picker opens inside the caravan or outpost window: red, green and blue sliders with a live preview that updates as you drag.
+    - Alpha slider (10%-100%) for both overlay forms, so an outpost can be a tint over its stock livery rather than a full repaint.
+    - Size slider for the caravan ring marker, and a reset button that restores the stock appearance.
     - Settings copy/paste of colors with shift-right-click / shift-left-click, in any combination between caravans and outposts.
     - Outpost colors persist through blueprints, ghosts, and cloning.
     - Remote interface "custom-caravans" (set_color, clear_color, get_color, open_gui) for other mods.

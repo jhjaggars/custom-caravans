@@ -9,9 +9,10 @@ stops - instead of every caravan/outpost of a given type looking identical.
 - **Per-entity color** for all five caravan units (`caravan`, `fluidavan`, `flyavan`, `fluidflyavan`,
   `nukavan`), their five TURD tech-path variants (`*-turd`), and all four outpost buildings
   (`outpost`, `outpost-fluid`, `outpost-aerial`, `outpost-aerial-fluid`).
-- A small color-picker panel opens alongside the entity's own GUI (the vanilla container/storage-tank
-  GUI for outposts, pyalienlife's own caravan GUI for caravans), with preset swatches, R/G/B sliders,
-  a live preview, and a reset button. Color changes apply immediately.
+- A small color-picker panel opens inside the entity's own GUI (the vanilla container/storage-tank
+  GUI for outposts, pyalienlife's own caravan GUI for caravans), with R/G/B sliders, an alpha slider,
+  a size slider for the caravan ring marker, a live preview, and a reset button. Color changes apply
+  immediately as you drag.
 - **Settings copy/paste**: shift-right-click a colored caravan or outpost to copy its color, then
   shift-left-click any other caravan or outpost (any combination, including cross-type) to paste it.
 - Outpost colors survive blueprinting (ghost ➜ build) and entity cloning.
